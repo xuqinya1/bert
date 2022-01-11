@@ -42,7 +42,8 @@ class BertConfig(object):
                attention_probs_dropout_prob=0.1,
                max_position_embeddings=512,
                type_vocab_size=16,
-               initializer_range=0.02):
+               initializer_range=0.02,
+               roberta=False):
     """Constructs BertConfig.
 
     Args:
@@ -78,6 +79,7 @@ class BertConfig(object):
     self.max_position_embeddings = max_position_embeddings
     self.type_vocab_size = type_vocab_size
     self.initializer_range = initializer_range
+    self.roberta = roberta
 
   @classmethod
   def from_dict(cls, json_object):
@@ -183,7 +185,7 @@ class BertModel(object):
         # normalize and perform dropout.
         self.embedding_output = embedding_postprocessor(
             input_tensor=self.embedding_output,
-            use_token_type=True,
+            use_token_type=not config.roberta,
             token_type_ids=token_type_ids,
             token_type_vocab_size=config.type_vocab_size,
             token_type_embedding_name="token_type_embeddings",
@@ -191,7 +193,8 @@ class BertModel(object):
             position_embedding_name="position_embeddings",
             initializer_range=config.initializer_range,
             max_position_embeddings=config.max_position_embeddings,
-            dropout_prob=config.hidden_dropout_prob)
+            dropout_prob=config.hidden_dropout_prob,
+            roberta=config.roberta)
 
       with tf.variable_scope("encoder"):
         # This converts a 2D mask of shape [batch_size, seq_length] to a 3D
@@ -393,7 +396,7 @@ def embedding_lookup(input_ids,
     initializer_range: float. Embedding initialization range.
     word_embedding_name: string. Name of the embedding table.
     use_one_hot_embeddings: bool. If True, use one-hot method for word
-      embeddings. If False, use `tf.gather()`.
+      embeddings. If False, use `tf.nn.embedding_lookup()`.
 
   Returns:
     float Tensor of shape [batch_size, seq_length, embedding_size].
@@ -411,12 +414,12 @@ def embedding_lookup(input_ids,
       shape=[vocab_size, embedding_size],
       initializer=create_initializer(initializer_range))
 
-  flat_input_ids = tf.reshape(input_ids, [-1])
   if use_one_hot_embeddings:
+    flat_input_ids = tf.reshape(input_ids, [-1])
     one_hot_input_ids = tf.one_hot(flat_input_ids, depth=vocab_size)
     output = tf.matmul(one_hot_input_ids, embedding_table)
   else:
-    output = tf.gather(embedding_table, flat_input_ids)
+    output = tf.nn.embedding_lookup(embedding_table, input_ids)
 
   input_shape = get_shape_list(input_ids)
 
@@ -434,7 +437,8 @@ def embedding_postprocessor(input_tensor,
                             position_embedding_name="position_embeddings",
                             initializer_range=0.02,
                             max_position_embeddings=512,
-                            dropout_prob=0.1):
+                            dropout_prob=0.1,
+                            roberta=False):
   """Performs various post-processing on a word embedding tensor.
 
   Args:
@@ -502,8 +506,11 @@ def embedding_postprocessor(input_tensor,
       # for position [0, 1, 2, ..., max_position_embeddings-1], and the current
       # sequence has positions [0, 1, 2, ... seq_length-1], so we can just
       # perform a slice.
-      position_embeddings = tf.slice(full_position_embeddings, [0, 0],
-                                     [seq_length, -1])
+      start = 0
+      if roberta:
+        start = 2
+      position_embeddings = tf.slice(full_position_embeddings, [start, 0],
+                                     [-1, -1])
       num_dims = len(output.shape.as_list())
 
       # Only the last two dimensions are relevant (`seq_length` and `width`), so
